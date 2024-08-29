@@ -1,0 +1,449 @@
+import pandas as pd
+import numpy as np
+import re
+import nltk
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.svm import SVC
+from sklearn.metrics import accuracy_score
+from sklearn.naive_bayes import MultinomialNB
+from sklearn.ensemble import RandomForestClassifier
+import joblib
+Reprocessing
+df = pd.read_csv("/kaggle/input/customer-review-dataset/redmi6.csv", encoding='latin1')
+First Phase : EDA
+df.head()
+Review Title	Customer name	Rating	Date	Category	Comments	Useful
+0	Another Midrange killer Smartphone by Xiaomi	Rishikumar Thakur	4.0 out of 5 stars	on 1 October 2018	Display	Another Midrange killer Smartphone by Xiaomi\n...	
+1	vry small size mobile	Raza ji	3.0 out of 5 stars	on 15 September 2018	Others	All ok but vry small size mobile	7 people found this helpful
+2	Full display not working in all application.	Vaibhav Patel	3.0 out of 5 stars	on 18 September 2018	Others	Quite good	7 people found this helpful
+3	Value for Money	Amazon Customer	5.0 out of 5 stars	on 28 September 2018	Display	Redmi has always have been the the king of bud...	2 people found this helpful
+4	Not worth for the money	Sudhakaran Wadakkancheri	2.0 out of 5 stars	on 18 September 2018	Others	worst product from MI. I am a hardcore fan of ...	6 people found this helpful
+df.shape
+(280, 7)
+data = df[['Rating', 'Comments']].reset_index(drop=True)
+data.head()
+Rating	Comments
+0	4.0 out of 5 stars	Another Midrange killer Smartphone by Xiaomi\n...
+1	3.0 out of 5 stars	All ok but vry small size mobile
+2	3.0 out of 5 stars	Quite good
+3	5.0 out of 5 stars	Redmi has always have been the the king of bud...
+4	2.0 out of 5 stars	worst product from MI. I am a hardcore fan of ...
+# in this case the same review with same class is repeated
+data.duplicated().sum()
+59
+data.drop_duplicates(inplace=True)
+data.duplicated().sum()
+0
+data.shape
+(221, 2)
+in the below case the same review may have different class and this will distract the model so we will remove the redundant row and the original from the data then we will annotate it and then we will merge it to the original dataseta
+data["Comments"].duplicated().sum()
+5
+duplicated_data=data[data["Comments"].duplicated(keep=False)]
+duplicated_data
+Rating	Comments
+30	5.0 out of 5 stars	Good phone
+32	4.0 out of 5 stars	Good
+65	5.0 out of 5 stars	Nice
+71	1.0 out of 5 stars	Ok
+80	4.0 out of 5 stars	Good phone
+114	5.0 out of 5 stars	Good
+154	4.0 out of 5 stars	Nice
+190	4.0 out of 5 stars	Nice mobile
+191	5.0 out of 5 stars	Nice mobile
+214	5.0 out of 5 stars	Ok
+data["Comments"].drop_duplicates(keep=False,inplace=True)
+data.shape
+(221, 2)
+unique_data=pd.read_csv('/kaggle/input/duplicate/duplicate.csv')
+unique_data.shape
+(10, 2)
+data=pd.DataFrame(np.vstack([unique_data, data]))
+data.columns = ['Rating', 'Comments']
+data.head()
+Rating	Comments
+0	5.0 out of 5 stars	Sturdy and reliable, the phone boasts an impre...
+1	4.0 out of 5 stars	Good
+2	5.0 out of 5 stars	Nice
+3	1.0 out of 5 stars	its abad phone I have use it
+4	4.0 out of 5 stars	Good phone
+data.shape
+(231, 2)
+# Convert the textual ratings to numerical values and store them in a new column 'Rating1'
+data['Rating1'] = data['Rating'].str.extract(r'(\d+\.\d+)')  # Extract numerical ratings
+data['Rating1'] = data['Rating1'].astype(float)  # Convert to float
+data.head()
+Rating	Comments	Rating1
+0	5.0 out of 5 stars	Sturdy and reliable, the phone boasts an impre...	5.0
+1	4.0 out of 5 stars	Good	4.0
+2	5.0 out of 5 stars	Nice	5.0
+3	1.0 out of 5 stars	its abad phone I have use it	1.0
+4	4.0 out of 5 stars	Good phone	4.0
+# Convert Rating1 to polarity labels
+data['Polarity'] = data['Rating1'].apply(lambda x: 1 if x >= 3 else 0)
+data.head()
+Rating	Comments	Rating1	Polarity
+0	5.0 out of 5 stars	Sturdy and reliable, the phone boasts an impre...	5.0	1
+1	4.0 out of 5 stars	Good	4.0	1
+2	5.0 out of 5 stars	Nice	5.0	1
+3	1.0 out of 5 stars	its abad phone I have use it	1.0	0
+4	4.0 out of 5 stars	Good phone	4.0	1
+check the target class whether Balanced or Not
+value_counts=data.Polarity.value_counts()
+value_counts
+Polarity
+1    191
+0     40
+Name: count, dtype: int64
+value_counts.plot(kind="bar",x=value_counts.keys,colormap='viridis')
+<Axes: xlabel='Polarity'>
+
+# Count the null values
+data.isnull().sum()
+Rating      0
+Comments    0
+Rating1     0
+Polarity    0
+dtype: int64
+data.info()
+<class 'pandas.core.frame.DataFrame'>
+RangeIndex: 231 entries, 0 to 230
+Data columns (total 4 columns):
+ #   Column    Non-Null Count  Dtype  
+---  ------    --------------  -----  
+ 0   Rating    231 non-null    object 
+ 1   Comments  231 non-null    object 
+ 2   Rating1   231 non-null    float64
+ 3   Polarity  231 non-null    int64  
+dtypes: float64(1), int64(1), object(2)
+memory usage: 7.3+ KB
+Second Pahse: Cleaning Phase
+this function is for Lowering case all the words
+def lower(text):
+    ## we want to split the words of the sentence by split() to work with each word individually
+    words = text.split()
+    ## we created a new list to save all the lowercase words and we converted it by lower() method
+    lower = [word.lower() for word in words]
+    ## after finishing we join them back by join() method
+    return ' '.join(lower)
+## applying the function on the feature Review
+data['Comments']= data['Comments'].apply(lambda x:lower(x))
+data.head()
+Rating	Comments	Rating1	Polarity
+0	5.0 out of 5 stars	sturdy and reliable, the phone boasts an impre...	5.0	1
+1	4.0 out of 5 stars	good	4.0	1
+2	5.0 out of 5 stars	nice	5.0	1
+3	1.0 out of 5 stars	its abad phone i have use it	1.0	0
+4	4.0 out of 5 stars	good phone	4.0	1
+this function is for removing hyperlinks
+def hyperlinks(text):
+    ## this pattern follows any url
+    pattern = r'http\S+|www\S+'
+    ## re.sub() is used for substituting all the links with spaces
+    removed = re.sub(pattern, '', text)
+    return removed
+## applying the function on the feature Review
+data['Comments']= data['Comments'].apply(lambda x:hyperlinks(x))
+print("succes")
+succes
+defining a function for removing tabs between words
+def remove_large_spaces(text):
+    ## this pattern is for tabs
+    pattern = r'\s+'
+    # Remove tabs using regex substitution with spaces
+    removed_spaces = re.sub(pattern, ' ', text)
+    ## the strip method is used to remove any leading spaces after substitution
+    return removed_spaces.strip()
+data['Comments']= data['Comments'].apply(lambda x:remove_large_spaces(x))
+print("succes")
+succes
+# show the stopwords
+nltk.download('stopwords')
+stopword = nltk.corpus.stopwords.words('english')
+print(stopword)
+[nltk_data] Downloading package stopwords to /usr/share/nltk_data...
+[nltk_data]   Package stopwords is already up-to-date!
+['i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', "you're", "you've", "you'll", "you'd", 'your', 'yours', 'yourself', 'yourselves', 'he', 'him', 'his', 'himself', 'she', "she's", 'her', 'hers', 'herself', 'it', "it's", 'its', 'itself', 'they', 'them', 'their', 'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', "that'll", 'these', 'those', 'am', 'is', 'are', 'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', "don't", 'should', "should've", 'now', 'd', 'll', 'm', 'o', 're', 've', 'y', 'ain', 'aren', "aren't", 'couldn', "couldn't", 'didn', "didn't", 'doesn', "doesn't", 'hadn', "hadn't", 'hasn', "hasn't", 'haven', "haven't", 'isn', "isn't", 'ma', 'mightn', "mightn't", 'mustn', "mustn't", 'needn', "needn't", 'shan', "shan't", 'shouldn', "shouldn't", 'wasn', "wasn't", 'weren', "weren't", 'won', "won't", 'wouldn', "wouldn't"]
+defining a function to remove stopwords
+def remove_stopwords(text):
+    # checking if the word in the sentences contain stop words or not and save it
+    text=' '.join([word for word in text.split() if word not in stopword])
+    return text
+data['Comments'] = data['Comments'].apply(lambda x: remove_stopwords(x))
+print("succes")
+succes
+defining the function to Remove Punctuations
+# we'll import string library as it already contains pre-defined punctuations
+import string
+string.punctuation
+
+def remove_punctuation(text):
+    punctuationfree="".join([i for i in text if i not in string.punctuation])
+    return punctuationfree
+#storing the punctuation-free text
+data['Comments']= data['Comments'].apply(lambda x:remove_punctuation(x))
+print("succes")
+succes
+removing the numbers in text data
+## this function is for removing the numbers in text data
+def remove_numbers(text):
+    ## this pattern in special for numbers
+    pattern = r'\d+'
+    # Remove numbers using regex substitution with spaces
+    removed_numbers = re.sub(pattern, '', text)
+    return removed_numbers
+data['Comments']= data['Comments'].apply(lambda x:remove_numbers(x))
+print("succes")
+succes
+removing any html tag
+## this function as for removing any html tag
+def remove_html(text):
+    html_re = re.compile(r'<.*?>')
+    # create regex for html tag
+    text = re.sub(html_re, '', text)
+    return text
+data['Comments']= data['Comments'].apply(lambda x:remove_html(x))
+print("succes")
+succes
+Removing Date and Time
+## this function is for removing date and time from the texts
+def remove_date_time(text):
+    # this patterns match date and time formats
+    # Matches MM/DD/YYYY or MM/DD/YY
+    date_pattern = r"\d{1,2}/\d{1,2}/\d{2,4}"
+     # Matches HH:MM or HH:MMAM/HH:MMPM
+    time_pattern = r"\d{1,2}:\d{2}([AP]M)?"
+    # Remove date and time patterns from the text
+    text_without_date = re.sub(date_pattern, "", text)
+    text_without_date_time = re.sub(time_pattern, "", text_without_date)
+    return text_without_date_time
+data['Comments']= data['Comments'].apply(lambda x:remove_date_time(x))
+print("succes")
+succes
+Removing mentions and hashtags
+## this function is for removing mentions and hashtags from the texts
+def remove_mentions_hashtags(text):
+    # Remove mentions
+    text_without_mentions = re.sub(r"@\w+", "", text)
+    # Remove hashtags
+    text_without_mentions_hashtags = re.sub(r"#\w+", "", text_without_mentions)
+    return text_without_mentions_hashtags
+data['Comments']= data['Comments'].apply(lambda x:remove_mentions_hashtags(x))
+print("succes")
+succes
+stem the text
+import nltk
+from nltk.stem import PorterStemmer
+
+def stem_text(text):
+  """Stems the text using PorterStemmer.
+
+  Args:
+      text: The text to be stemmed.
+
+  Returns:
+      The stemmed text.
+  """
+  stemmer = PorterStemmer()
+  words = text.split()
+  stemmed_text = " ".join([stemmer.stem(word) for word in words])
+  return stemmed_text
+
+data['Comments']= data['Comments'].apply(lambda x:stem_text(x))
+print("success")
+success
+function for tokenization
+it doesn't work with SVM algorithm
+
+# import nltk
+# from nltk.tokenize import word_tokenize 
+
+# def tokenize_data(data):
+#     """
+#     Tokenize the input data using NLTK
+    
+#     Args:
+#     data : str : The input text data
+    
+#     Returns:
+#     tokens : list : List of tokens
+#     """
+#     tokens = word_tokenize(data)
+#     return tokens
+# data['Comments']= data['Comments'].apply(lambda x:tokenize_data(x))
+# print("success")
+data
+Rating	Comments	Rating1	Polarity
+0	5.0 out of 5 stars	sturdi reliabl phone boast impress array featu...	5.0	1
+1	4.0 out of 5 stars	good	4.0	1
+2	5.0 out of 5 stars	nice	5.0	1
+3	1.0 out of 5 stars	abad phone use	1.0	0
+4	4.0 out of 5 stars	good phone	4.0	1
+...	...	...	...	...
+226	5.0 out of 5 stars	like phone awesom look design im use phone	5.0	1
+227	4.0 out of 5 stars	product avasom invoic note includ	4.0	1
+228	3.0 out of 5 stars	redmi note note proit seem older model better ...	3.0	1
+229	5.0 out of 5 stars	love mi	5.0	1
+230	1.0 out of 5 stars	old configur higher price worth money camera q...	1.0	0
+231 rows × 4 columns
+
+End Of Final Cleaning and reprocessing
+--------------------------------------
+prediction Model
+we will use kernal SVM linear type
+# Convert 'Polarity' column to integer type
+data['Polarity'] = data['Polarity'].astype(int)
+# Check the data types after conversion
+print(data.dtypes)
+Rating       object
+Comments     object
+Rating1     float64
+Polarity      int64
+dtype: object
+X = data['Comments']
+y = data['Polarity']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Convert text data to numerical features using TF-IDF
+vectorizer = TfidfVectorizer()
+X_train_tfidf = vectorizer.fit_transform(X_train)
+X_test_tfidf = vectorizer.transform(X_test)
+print(X_train_tfidf)
+  (0, 494)	1.0
+  (1, 454)	0.6390495498194186
+  (1, 425)	0.7691655692213468
+  (2, 427)	0.38673558802429575
+  (2, 82)	0.41360330076583496
+  (2, 417)	0.41360330076583496
+  (2, 713)	0.33447096093878537
+  (2, 211)	0.29225836713799164
+  (2, 503)	0.34139218369943525
+  (2, 419)	0.3488676737725542
+  (2, 494)	0.26973533394550464
+  (3, 280)	1.0
+  (4, 603)	0.8111260137252596
+  (4, 314)	0.5848714301948507
+  (5, 543)	0.8862959650608134
+  (5, 494)	0.4631192743958314
+  (6, 568)	0.521210015666082
+  (6, 115)	0.22760876638095934
+  (6, 544)	0.2069866026104774
+  (6, 65)	0.2690405845657507
+  (6, 314)	0.7492049647674474
+  (7, 513)	0.380371086375712
+  (7, 540)	0.318689837841714
+  (7, 587)	0.41031281914746964
+  (7, 214)	0.49185099451229153
+  :	:
+  (178, 234)	0.4695233399366406
+  (178, 76)	0.2868721667833017
+  (178, 603)	0.2525230591828423
+  (178, 314)	0.1820845593437888
+  (178, 713)	0.32830680000788076
+  (179, 846)	0.929394559116045
+  (179, 544)	0.36908773142098955
+  (180, 329)	0.42940200526997874
+  (180, 208)	0.33207639927292915
+  (180, 849)	0.32170251048978565
+  (180, 265)	0.35821651129242266
+  (180, 613)	0.32170251048978565
+  (180, 517)	0.2782266518828326
+  (180, 590)	0.22165070324656574
+  (180, 454)	0.4934531379726384
+  (181, 364)	0.43801715395569313
+  (181, 826)	0.413414265950152
+  (181, 474)	0.3126143911959632
+  (181, 265)	0.39433078342601097
+  (181, 820)	0.43801715395569313
+  (181, 223)	0.34406261980882474
+  (181, 454)	0.2716007726426792
+  (182, 314)	1.0
+  (183, 78)	0.8349303337654259
+  (183, 544)	0.5503556466125832
+# Train the SVM model
+svm = SVC(kernel='linear')
+svm.fit(X_train_tfidf, y_train)
+
+SVC
+SVC(kernel='linear')
+# Predict and evaluate accuracy
+y_pred = svm.predict(X_test_tfidf)
+accuracy = accuracy_score(y_test, y_pred)
+print("Accuracy:", accuracy)
+Accuracy: 0.9148936170212766
+def prediction(text):
+    X_test_tfidf = vectorizer.transform(text)
+    y_pred=svm.predict(X_test_tfidf)
+    if y_pred==1:
+        print("Positive Review")
+    else:
+        print("Negative Review")
+# x = input("Please enter your review 😊 ")
+# prediction([x])  # Pass the input as a list
+GUI
+# import tkinter as tk
+# from sklearn.feature_extraction.text import TfidfVectorizer
+# from sklearn.svm import SVC
+
+# # Function to perform algorithm on the input text
+# def perform_algorithm():
+#     input_text = text_input.get("1.0", "end-1c")  # Get text from text input
+#     # Perform your algorithm here with input_text
+#     X_test_tfidf = vectorizer.transform([input_text])  # Vectorize input text
+#     y_pred = svm.predict(X_test_tfidf)  # Predict using SVM model
+    
+#     # Display result based on prediction
+#     if y_pred == 1:
+#         result = "Positive Review"
+#     else:
+#         result = "Negative Review"
+    
+#     result_text.config(state="normal")  # Enable result_text for editing
+#     result_text.delete("1.0", "end")  # Clear previous result
+#     result_text.insert("1.0", result)  # Display result
+#     result_text.config(state="disabled")  # Disable result_text after displaying result
+
+# # Load or preprocess your data here
+# # Assuming you have loaded and preprocessed your data into X_train, y_train
+
+# # Initialize and fit TfidfVectorizer
+# vectorizer = TfidfVectorizer() 
+# X_train_tfidf = vectorizer.fit_transform(X_train)
+
+# # Initialize and train your SVM model
+# svm = SVC(kernel='linear')  # You can choose different kernels and parameters
+# svm.fit(X_train_tfidf, y_train)
+
+# # Create main application window
+# root = tk.Tk()
+# root.title("Algorithm GUI")
+
+# # Section 1: Input Text Box
+# input_frame = tk.Frame(root)
+# input_frame.pack(fill="both", expand=True)
+
+# input_label = tk.Label(input_frame, text="Input Text:")
+# input_label.pack()
+
+# text_input = tk.Text(input_frame, height=5)
+# text_input.pack(fill="both", expand=True)
+
+# # Section 2: Result Display Box
+# result_frame = tk.Frame(root)
+# result_frame.pack(fill="both", expand=True)
+
+# result_label = tk.Label(result_frame, text="Result:")
+# result_label.pack()
+
+# result_text = tk.Text(result_frame, height=5, state="disabled")
+# result_text.pack(fill="both", expand=True)
+
+# # Button to trigger algorithm
+# calculate_button = tk.Button(root, text="Predict", command=perform_algorithm)
+# calculate_button.pack()
+
+# # Run the main event loop
+# root.mainloop()
+.
